@@ -20,9 +20,9 @@ export interface ThesisRecord {
   status: ThesisStatus;
   stance: ThesisStance;
   summary: string;
-  invalidation: string;
-  timeHorizon: string;
-  benchmark: string;
+  invalidation?: string;
+  timeHorizon?: string;
+  benchmark?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,14 +77,14 @@ export interface FoundationCounts {
 }
 
 export interface CreateThesisInput {
-  title: string;
+  title?: string;
   symbol: string;
-  status: ThesisStatus;
-  stance: ThesisStance;
+  status?: ThesisStatus;
+  stance?: ThesisStance;
   summary: string;
-  invalidation: string;
-  timeHorizon: string;
-  benchmark: string;
+  invalidation?: string;
+  timeHorizon?: string;
+  benchmark?: string;
   initialAssumption?: {
     statement: string;
     status: AssumptionStatus;
@@ -209,6 +209,11 @@ export const db = new StonksDatabase();
 
 const now = () => new Date().toISOString();
 
+function compactText(value?: string | null) {
+  const next = value?.trim();
+  return next ? next : undefined;
+}
+
 function sortByNewest<T extends { occurredAt?: string; createdAt?: string; updatedAt?: string }>(
   items: T[]
 ) {
@@ -297,19 +302,25 @@ export async function getFoundationCounts(): Promise<FoundationCounts> {
 export async function createThesisEntry(input: CreateThesisInput) {
   const thesisId = crypto.randomUUID();
   const createdAt = now();
+  const symbol = input.symbol.trim().toUpperCase();
+  const summary = input.summary.trim();
+  const title = compactText(input.title) ?? `${symbol} thesis`;
+  const invalidation = compactText(input.invalidation);
+  const timeHorizon = compactText(input.timeHorizon);
+  const benchmark = compactText(input.benchmark);
 
   const thesis: ThesisRecord = {
     id: thesisId,
-    title: input.title.trim(),
-    symbol: input.symbol.trim().toUpperCase(),
-    status: input.status,
-    stance: input.stance,
-    summary: input.summary.trim(),
-    invalidation: input.invalidation.trim(),
-    timeHorizon: input.timeHorizon.trim(),
-    benchmark: input.benchmark.trim(),
+    title,
+    symbol,
+    status: input.status ?? 'active',
+    stance: input.stance ?? 'long',
+    summary,
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    ...(invalidation ? { invalidation } : {}),
+    ...(timeHorizon ? { timeHorizon } : {}),
+    ...(benchmark ? { benchmark } : {})
   };
 
   await db.transaction(
@@ -334,6 +345,7 @@ export async function createThesisEntry(input: CreateThesisInput) {
       }
 
       if (input.initialTrade) {
+        const notes = compactText(input.initialTrade.notes);
         await db.trades.add({
           id: crypto.randomUUID(),
           thesisId,
@@ -343,9 +355,9 @@ export async function createThesisEntry(input: CreateThesisInput) {
           price: input.initialTrade.price,
           fees: input.initialTrade.fees,
           occurredAt: input.initialTrade.occurredAt,
-          notes: input.initialTrade.notes?.trim(),
           createdAt,
-          updatedAt: createdAt
+          updatedAt: createdAt,
+          ...(notes ? { notes } : {})
         });
       }
 
@@ -374,6 +386,7 @@ export async function addTradeToThesis(input: AddTradeInput) {
   }
 
   await db.transaction('rw', db.theses, db.trades, async () => {
+    const notes = compactText(input.notes);
     await db.trades.add({
       id: crypto.randomUUID(),
       thesisId: input.thesisId,
@@ -383,9 +396,9 @@ export async function addTradeToThesis(input: AddTradeInput) {
       price: input.price,
       fees: input.fees,
       occurredAt: input.occurredAt,
-      notes: input.notes?.trim(),
       createdAt,
-      updatedAt: createdAt
+      updatedAt: createdAt,
+      ...(notes ? { notes } : {})
     });
 
     await db.theses.update(input.thesisId, {
