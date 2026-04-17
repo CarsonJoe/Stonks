@@ -2,10 +2,11 @@ import Dexie, { type Table } from 'dexie';
 import type { LocalPasskeyCredential } from './lib/webauthn';
 
 export type ThesisStatus = 'watch' | 'active' | 'closed';
-export type ThesisStance = 'long' | 'short' | 'pair';
+export type ThesisDirection = 'long' | 'short';
 export type AssumptionStatus = 'holding' | 'weaker' | 'broken' | 'unknown';
 export type TradeSide = 'buy' | 'sell';
 export type ReviewKind = 'entry' | 'checkin' | 'exit';
+export type NotificationKind = 'weekly' | 'quartile';
 
 export interface SettingRecord<T = unknown> {
   key: string;
@@ -18,11 +19,22 @@ export interface ThesisRecord {
   title: string;
   symbol: string;
   status: ThesisStatus;
-  stance: ThesisStance;
+  direction: ThesisDirection;
+  /** 0–100 confidence in the thesis playing out. */
+  conviction: number;
   summary: string;
   invalidation?: string;
   timeHorizon?: string;
-  benchmark?: string;
+  /** Target return at maturity as a decimal, e.g. 0.40 = +40%. */
+  destination?: number;
+  /** Thesis duration in days, e.g. 365 = 1 year. */
+  durationDays?: number;
+  /** Std dev of expected return at maturity as a decimal, e.g. 0.20 = ±20%. */
+  errorBand?: number;
+  /** Symbol used as primary benchmark, e.g. "QQQ", "SPY", "SOXX". */
+  benchmarkSymbol: string;
+  /** Price of the benchmark at thesis creation time (for alpha calculation). */
+  benchmarkEntryPrice?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -60,6 +72,15 @@ export interface ReviewRecord {
   createdAt: string;
 }
 
+export interface NotificationRuleRecord {
+  id: string;
+  thesisId: string;
+  kind: NotificationKind;
+  /** Only set for 'weekly' kind — ISO timestamp of last trigger. */
+  lastTriggeredAt?: string;
+  createdAt: string;
+}
+
 export interface MarketSnapshotRecord {
   id: string;
   symbol: string;
@@ -68,23 +89,20 @@ export interface MarketSnapshotRecord {
   payload: unknown;
 }
 
-export interface FoundationCounts {
-  theses: number;
-  assumptions: number;
-  trades: number;
-  reviews: number;
-  marketSnapshots: number;
-}
-
 export interface CreateThesisInput {
   title?: string;
   symbol: string;
   status?: ThesisStatus;
-  stance?: ThesisStance;
+  direction?: ThesisDirection;
+  conviction?: number;
   summary: string;
   invalidation?: string;
   timeHorizon?: string;
-  benchmark?: string;
+  destination?: number;
+  durationDays?: number;
+  errorBand?: number;
+  benchmarkSymbol?: string;
+  benchmarkEntryPrice?: number;
   initialAssumption?: {
     statement: string;
     status: AssumptionStatus;
@@ -130,30 +148,10 @@ export interface AddReviewInput {
 }
 
 export type ThesisTimelineEvent =
-  | {
-      id: string;
-      kind: 'thesis';
-      occurredAt: string;
-      thesis: ThesisRecord;
-    }
-  | {
-      id: string;
-      kind: 'assumption';
-      occurredAt: string;
-      assumption: AssumptionRecord;
-    }
-  | {
-      id: string;
-      kind: 'trade';
-      occurredAt: string;
-      trade: TradeRecord;
-    }
-  | {
-      id: string;
-      kind: 'review';
-      occurredAt: string;
-      review: ReviewRecord;
-    };
+  | { id: string; kind: 'thesis'; occurredAt: string; thesis: ThesisRecord }
+  | { id: string; kind: 'assumption'; occurredAt: string; assumption: AssumptionRecord }
+  | { id: string; kind: 'trade'; occurredAt: string; trade: TradeRecord }
+  | { id: string; kind: 'review'; occurredAt: string; review: ReviewRecord };
 
 export interface ThesisMetrics {
   totalBoughtQuantity: number;
@@ -174,12 +172,15 @@ export interface ThesisSnapshot {
   metrics: ThesisMetrics;
 }
 
+// ── Database ───────────────────────────────────────────────────────────────────
+
 class StonksDatabase extends Dexie {
   settings!: Table<SettingRecord, string>;
   theses!: Table<ThesisRecord, string>;
   assumptions!: Table<AssumptionRecord, string>;
   trades!: Table<TradeRecord, string>;
   reviews!: Table<ReviewRecord, string>;
+  notificationRules!: Table<NotificationRuleRecord, string>;
   marketSnapshots!: Table<MarketSnapshotRecord, string>;
 
   constructor() {
@@ -202,10 +203,69 @@ class StonksDatabase extends Dexie {
       reviews: 'id, thesisId, kind, createdAt',
       marketSnapshots: 'id, symbol, source, capturedAt'
     });
+
+    this.version(3)
+      .stores({
+        settings: 'key, updatedAt',
+        theses: 'id, symbol, status, direction, updatedAt, createdAt',
+        assumptions: 'id, thesisId, status, updatedAt, createdAt',
+        trades: 'id, thesisId, symbol, side, occurredAt',
+        reviews: 'id, thesisId, kind, createdAt',
+        notificationRules: 'id, thesisId, kind, createdAt',
+        marketSnapshots: 'id, symbol, source, capturedAt'
+      })
+      .upgrade((tx) => {
+        // Migrate existing theses: add direction field (default long), conviction (default 50)
+        return tx
+          .table('theses')
+          .toCollection()
+          .modify((thesis: ThesisRecord & { stance?: string }) => {
+            if (!thesis.direction) {
+              thesis.direction = (thesis.stance as ThesisDirection) === 'short' ? 'short' : 'long';
+            }
+            if (thesis.conviction === undefined || thesis.conviction === null) {
+              thesis.conviction = 50;
+            }
+            if (!thesis.benchmarkSymbol) {
+              thesis.benchmarkSymbol = 'SPY';
+            }
+          });
+      });
+
+    this.version(4)
+      .stores({
+        settings: 'key, updatedAt',
+        theses: 'id, symbol, status, direction, updatedAt, createdAt',
+        assumptions: 'id, thesisId, status, updatedAt, createdAt',
+        trades: 'id, thesisId, symbol, side, occurredAt',
+        reviews: 'id, thesisId, kind, createdAt',
+        notificationRules: 'id, thesisId, kind, createdAt',
+        marketSnapshots: 'id, symbol, source, capturedAt'
+      })
+      .upgrade((tx) => {
+        // Migrate: targetReturn → destination, errorMargin → errorBand, default durationDays
+        type OldThesis = ThesisRecord & { targetReturn?: number; errorMargin?: number };
+        return tx
+          .table('theses')
+          .toCollection()
+          .modify((thesis: OldThesis) => {
+            if (thesis.destination === undefined && typeof thesis.targetReturn === 'number') {
+              thesis.destination = thesis.targetReturn;
+            }
+            if (thesis.errorBand === undefined && typeof thesis.errorMargin === 'number') {
+              thesis.errorBand = thesis.errorMargin;
+            }
+            if (thesis.durationDays === undefined && thesis.destination !== undefined) {
+              thesis.durationDays = 365;
+            }
+          });
+      });
   }
 }
 
 export const db = new StonksDatabase();
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 const now = () => new Date().toISOString();
 
@@ -217,21 +277,22 @@ function compactText(value?: string | null) {
 function sortByNewest<T extends { occurredAt?: string; createdAt?: string; updatedAt?: string }>(
   items: T[]
 ) {
-  return [...items].sort((left, right) => {
-    const leftDate = left.occurredAt ?? left.createdAt ?? left.updatedAt ?? '';
-    const rightDate = right.occurredAt ?? right.createdAt ?? right.updatedAt ?? '';
-    return rightDate.localeCompare(leftDate);
+  return [...items].sort((a, b) => {
+    const aDate = a.occurredAt ?? a.createdAt ?? a.updatedAt ?? '';
+    const bDate = b.occurredAt ?? b.createdAt ?? b.updatedAt ?? '';
+    return bDate.localeCompare(aDate);
   });
 }
 
-function sanitizeThesis(record: ThesisRecord): ThesisRecord {
+function sanitizeThesis(record: ThesisRecord & { stance?: string }): ThesisRecord {
   return {
     ...record,
-    stance: record.stance ?? 'long',
+    direction: record.direction ?? ((record.stance as ThesisDirection) === 'short' ? 'short' : 'long'),
+    conviction: record.conviction ?? 50,
+    benchmarkSymbol: record.benchmarkSymbol ?? 'QQQ',
     summary: record.summary ?? '',
     invalidation: record.invalidation ?? '',
-    timeHorizon: record.timeHorizon ?? '',
-    benchmark: record.benchmark ?? ''
+    timeHorizon: record.timeHorizon ?? ''
   };
 }
 
@@ -249,11 +310,10 @@ function buildMetrics(trades: TradeRecord[]): ThesisMetrics {
     if (trade.side === 'buy') {
       totalBoughtQuantity += trade.quantity;
       grossBuyCost += grossValue + trade.fees;
-      continue;
+    } else {
+      totalSoldQuantity += trade.quantity;
+      grossSellProceeds += grossValue - trade.fees;
     }
-
-    totalSoldQuantity += trade.quantity;
-    grossSellProceeds += grossValue - trade.fees;
   }
 
   return {
@@ -263,10 +323,11 @@ function buildMetrics(trades: TradeRecord[]): ThesisMetrics {
     grossBuyCost,
     grossSellProceeds,
     totalFees,
-    averageBuyPrice:
-      totalBoughtQuantity > 0 ? grossBuyCost / totalBoughtQuantity : null
+    averageBuyPrice: totalBoughtQuantity > 0 ? grossBuyCost / totalBoughtQuantity : null
   };
 }
+
+// ── Settings ───────────────────────────────────────────────────────────────────
 
 export async function getSetting<T>(key: string) {
   const setting = await db.settings.get(key);
@@ -274,30 +335,10 @@ export async function getSetting<T>(key: string) {
 }
 
 export async function setSetting<T>(key: string, value: T) {
-  await db.settings.put({
-    key,
-    value,
-    updatedAt: now()
-  });
+  await db.settings.put({ key, value, updatedAt: now() });
 }
 
-export async function getFoundationCounts(): Promise<FoundationCounts> {
-  const [theses, assumptions, trades, reviews, marketSnapshots] = await Promise.all([
-    db.theses.count(),
-    db.assumptions.count(),
-    db.trades.count(),
-    db.reviews.count(),
-    db.marketSnapshots.count()
-  ]);
-
-  return {
-    theses,
-    assumptions,
-    trades,
-    reviews,
-    marketSnapshots
-  };
-}
+// ── Thesis CRUD ────────────────────────────────────────────────────────────────
 
 export async function createThesisEntry(input: CreateThesisInput) {
   const thesisId = crypto.randomUUID();
@@ -305,74 +346,71 @@ export async function createThesisEntry(input: CreateThesisInput) {
   const symbol = input.symbol.trim().toUpperCase();
   const summary = input.summary.trim();
   const title = compactText(input.title) ?? `${symbol} thesis`;
-  const invalidation = compactText(input.invalidation);
-  const timeHorizon = compactText(input.timeHorizon);
-  const benchmark = compactText(input.benchmark);
 
   const thesis: ThesisRecord = {
     id: thesisId,
     title,
     symbol,
     status: input.status ?? 'active',
-    stance: input.stance ?? 'long',
+    direction: input.direction ?? 'long',
+    conviction: input.conviction ?? 50,
     summary,
+    benchmarkSymbol: input.benchmarkSymbol ?? 'QQQ',
     createdAt,
     updatedAt: createdAt,
-    ...(invalidation ? { invalidation } : {}),
-    ...(timeHorizon ? { timeHorizon } : {}),
-    ...(benchmark ? { benchmark } : {})
+    ...(compactText(input.invalidation) ? { invalidation: compactText(input.invalidation) } : {}),
+    ...(compactText(input.timeHorizon) ? { timeHorizon: compactText(input.timeHorizon) } : {}),
+    ...(typeof input.destination === 'number' ? { destination: input.destination } : {}),
+    ...(typeof input.durationDays === 'number' ? { durationDays: input.durationDays } : {}),
+    ...(typeof input.errorBand === 'number' ? { errorBand: input.errorBand } : {}),
+    ...(typeof input.benchmarkEntryPrice === 'number'
+      ? { benchmarkEntryPrice: input.benchmarkEntryPrice }
+      : {})
   };
 
-  await db.transaction(
-    'rw',
-    db.theses,
-    db.assumptions,
-    db.trades,
-    db.reviews,
-    async () => {
-      await db.theses.add(thesis);
+  await db.transaction('rw', db.theses, db.assumptions, db.trades, db.reviews, async () => {
+    await db.theses.add(thesis);
 
-      if (input.initialAssumption?.statement.trim()) {
-        await db.assumptions.add({
-          id: crypto.randomUUID(),
-          thesisId,
-          statement: input.initialAssumption.statement.trim(),
-          status: input.initialAssumption.status,
-          weight: input.initialAssumption.weight,
-          createdAt,
-          updatedAt: createdAt
-        });
-      }
-
-      if (input.initialTrade) {
-        const notes = compactText(input.initialTrade.notes);
-        await db.trades.add({
-          id: crypto.randomUUID(),
-          thesisId,
-          symbol: thesis.symbol,
-          side: input.initialTrade.side,
-          quantity: input.initialTrade.quantity,
-          price: input.initialTrade.price,
-          fees: input.initialTrade.fees,
-          occurredAt: input.initialTrade.occurredAt,
-          createdAt,
-          updatedAt: createdAt,
-          ...(notes ? { notes } : {})
-        });
-      }
-
-      if (input.initialReview?.summary.trim()) {
-        await db.reviews.add({
-          id: crypto.randomUUID(),
-          thesisId,
-          kind: input.initialReview.kind,
-          summary: input.initialReview.summary.trim(),
-          conviction: input.initialReview.conviction,
-          createdAt
-        });
-      }
+    if (input.initialAssumption?.statement.trim()) {
+      await db.assumptions.add({
+        id: crypto.randomUUID(),
+        thesisId,
+        statement: input.initialAssumption.statement.trim(),
+        status: input.initialAssumption.status,
+        weight: input.initialAssumption.weight,
+        createdAt,
+        updatedAt: createdAt
+      });
     }
-  );
+
+    if (input.initialTrade) {
+      const notes = compactText(input.initialTrade.notes);
+      await db.trades.add({
+        id: crypto.randomUUID(),
+        thesisId,
+        symbol: thesis.symbol,
+        side: input.initialTrade.side,
+        quantity: input.initialTrade.quantity,
+        price: input.initialTrade.price,
+        fees: input.initialTrade.fees,
+        occurredAt: input.initialTrade.occurredAt,
+        createdAt,
+        updatedAt: createdAt,
+        ...(notes ? { notes } : {})
+      });
+    }
+
+    if (input.initialReview?.summary.trim()) {
+      await db.reviews.add({
+        id: crypto.randomUUID(),
+        thesisId,
+        kind: input.initialReview.kind,
+        summary: input.initialReview.summary.trim(),
+        conviction: input.initialReview.conviction,
+        createdAt
+      });
+    }
+  });
 
   return thesisId;
 }
@@ -380,10 +418,7 @@ export async function createThesisEntry(input: CreateThesisInput) {
 export async function addTradeToThesis(input: AddTradeInput) {
   const createdAt = now();
   const thesis = await db.theses.get(input.thesisId);
-
-  if (!thesis) {
-    throw new Error('The thesis no longer exists.');
-  }
+  if (!thesis) throw new Error('The thesis no longer exists.');
 
   await db.transaction('rw', db.theses, db.trades, async () => {
     const notes = compactText(input.notes);
@@ -400,20 +435,14 @@ export async function addTradeToThesis(input: AddTradeInput) {
       updatedAt: createdAt,
       ...(notes ? { notes } : {})
     });
-
-    await db.theses.update(input.thesisId, {
-      updatedAt: createdAt
-    });
+    await db.theses.update(input.thesisId, { updatedAt: createdAt });
   });
 }
 
 export async function addAssumptionToThesis(input: AddAssumptionInput) {
   const createdAt = now();
   const thesis = await db.theses.get(input.thesisId);
-
-  if (!thesis) {
-    throw new Error('The thesis no longer exists.');
-  }
+  if (!thesis) throw new Error('The thesis no longer exists.');
 
   await db.transaction('rw', db.theses, db.assumptions, async () => {
     await db.assumptions.add({
@@ -425,20 +454,14 @@ export async function addAssumptionToThesis(input: AddAssumptionInput) {
       createdAt,
       updatedAt: createdAt
     });
-
-    await db.theses.update(input.thesisId, {
-      updatedAt: createdAt
-    });
+    await db.theses.update(input.thesisId, { updatedAt: createdAt });
   });
 }
 
 export async function addReviewToThesis(input: AddReviewInput) {
   const createdAt = now();
   const thesis = await db.theses.get(input.thesisId);
-
-  if (!thesis) {
-    throw new Error('The thesis no longer exists.');
-  }
+  if (!thesis) throw new Error('The thesis no longer exists.');
 
   await db.transaction('rw', db.theses, db.reviews, async () => {
     await db.reviews.add({
@@ -449,22 +472,15 @@ export async function addReviewToThesis(input: AddReviewInput) {
       conviction: input.conviction,
       createdAt
     });
-
-    await db.theses.update(input.thesisId, {
-      updatedAt: createdAt
-    });
+    await db.theses.update(input.thesisId, { updatedAt: createdAt });
   });
 }
 
 export async function listThesisSnapshots(): Promise<ThesisSnapshot[]> {
   const theses = (await db.theses.orderBy('updatedAt').reverse().toArray()).map(sanitizeThesis);
+  if (theses.length === 0) return [];
 
-  if (theses.length === 0) {
-    return [];
-  }
-
-  const thesisIds = theses.map((thesis) => thesis.id);
-
+  const thesisIds = theses.map((t) => t.id);
   const [assumptions, trades, reviews] = await Promise.all([
     db.assumptions.where('thesisId').anyOf(thesisIds).toArray(),
     db.trades.where('thesisId').anyOf(thesisIds).toArray(),
@@ -473,50 +489,23 @@ export async function listThesisSnapshots(): Promise<ThesisSnapshot[]> {
 
   return theses.map((thesis) => {
     const thesisAssumptions = sortByNewest(
-      assumptions.filter((assumption) => assumption.thesisId === thesis.id)
+      assumptions.filter((a) => a.thesisId === thesis.id)
     );
-    const thesisTrades = sortByNewest(
-      trades.filter((trade) => trade.thesisId === thesis.id)
-    );
-    const thesisReviews = sortByNewest(
-      reviews.filter((review) => review.thesisId === thesis.id)
-    );
+    const thesisTrades = sortByNewest(trades.filter((t) => t.thesisId === thesis.id));
+    const thesisReviews = sortByNewest(reviews.filter((r) => r.thesisId === thesis.id));
 
-    const timeline = [
-      {
-        id: `thesis-${thesis.id}`,
-        kind: 'thesis',
-        occurredAt: thesis.createdAt,
-        thesis
-      } satisfies ThesisTimelineEvent,
-      ...thesisAssumptions.map(
-        (assumption) =>
-          ({
-            id: assumption.id,
-            kind: 'assumption',
-            occurredAt: assumption.updatedAt,
-            assumption
-          }) satisfies ThesisTimelineEvent
-      ),
-      ...thesisTrades.map(
-        (trade) =>
-          ({
-            id: trade.id,
-            kind: 'trade',
-            occurredAt: trade.occurredAt,
-            trade
-          }) satisfies ThesisTimelineEvent
-      ),
-      ...thesisReviews.map(
-        (review) =>
-          ({
-            id: review.id,
-            kind: 'review',
-            occurredAt: review.createdAt,
-            review
-          }) satisfies ThesisTimelineEvent
-      )
-    ].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    const timeline: ThesisTimelineEvent[] = [
+      { id: `thesis-${thesis.id}`, kind: 'thesis' as const, occurredAt: thesis.createdAt, thesis },
+      ...thesisAssumptions.map((a) => ({
+        id: a.id, kind: 'assumption' as const, occurredAt: a.updatedAt, assumption: a
+      })),
+      ...thesisTrades.map((t) => ({
+        id: t.id, kind: 'trade' as const, occurredAt: t.occurredAt, trade: t
+      })),
+      ...thesisReviews.map((r) => ({
+        id: r.id, kind: 'review' as const, occurredAt: r.createdAt, review: r
+      }))
+    ].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 
     return {
       thesis,
@@ -529,54 +518,40 @@ export async function listThesisSnapshots(): Promise<ThesisSnapshot[]> {
   });
 }
 
-export async function seedFoundationEntries() {
-  const thesisId = await createThesisEntry({
-    title: 'Risk sleeve momentum thesis',
-    symbol: 'AAPL',
-    status: 'active',
-    stance: 'long',
-    summary:
-      'Using a starter position to validate the local thesis pipeline before real trade logging starts.',
-    invalidation: 'Cut the setup if revisions stall and the thesis turns into pure hope.',
-    timeHorizon: '6-12 months',
-    benchmark: 'SPY + CPIAUCSL',
-    initialAssumption: {
-      statement:
-        'Consumer demand remains resilient enough to support upside revisions.',
-      status: 'holding',
-      weight: 8
-    },
-    initialTrade: {
-      side: 'buy',
-      quantity: 8,
-      price: 196.32,
-      fees: 0,
-      occurredAt: now(),
-      notes: 'Seed record for the local data pipeline.'
-    },
-    initialReview: {
-      kind: 'entry',
-      summary: 'Initial thesis entry created to validate storage and timelines.',
-      conviction: 63
-    }
-  });
+// ── Notification rules ─────────────────────────────────────────────────────────
 
-  return thesisId;
+export async function listNotificationRules(): Promise<NotificationRuleRecord[]> {
+  return db.notificationRules.toArray();
 }
 
-export async function saveMarketSnapshot(
-  symbol: string,
-  source: string,
-  payload: unknown
-) {
-  await db.marketSnapshots.put({
-    id: crypto.randomUUID(),
-    symbol,
-    source,
-    payload,
-    capturedAt: now()
-  });
+export async function upsertNotificationRule(
+  thesisId: string,
+  kind: NotificationKind
+): Promise<void> {
+  const existing = await db.notificationRules
+    .where('thesisId').equals(thesisId)
+    .filter((r) => r.kind === kind)
+    .first();
+
+  if (!existing) {
+    await db.notificationRules.add({
+      id: crypto.randomUUID(),
+      thesisId,
+      kind,
+      createdAt: now()
+    });
+  }
 }
+
+export async function deleteNotificationRule(id: string): Promise<void> {
+  await db.notificationRules.delete(id);
+}
+
+export async function markNotificationTriggered(id: string): Promise<void> {
+  await db.notificationRules.update(id, { lastTriggeredAt: now() });
+}
+
+// ── Passkey helpers ────────────────────────────────────────────────────────────
 
 export async function getLocalPasskeyCredential() {
   return (await getSetting<LocalPasskeyCredential>('security.localPasskey')) ?? null;
@@ -584,4 +559,16 @@ export async function getLocalPasskeyCredential() {
 
 export async function saveLocalPasskeyCredential(record: LocalPasskeyCredential) {
   await setSetting('security.localPasskey', record);
+}
+
+// ── Market snapshots ───────────────────────────────────────────────────────────
+
+export async function saveMarketSnapshot(symbol: string, source: string, payload: unknown) {
+  await db.marketSnapshots.put({
+    id: crypto.randomUUID(),
+    symbol,
+    source,
+    payload,
+    capturedAt: now()
+  });
 }
