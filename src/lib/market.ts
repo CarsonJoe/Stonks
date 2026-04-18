@@ -29,8 +29,6 @@ export interface MarketQuoteResult {
   changePercent: number | null;
   updatedAt: string | null;
   volume: number | null;
-  pe: number | null;
-  marketCap: number | null;
   raw: unknown;
   error?: string;
 }
@@ -76,6 +74,14 @@ export interface MarketCandlesResult {
   status: number | null;
   candles: MarketCandle[];
   raw: unknown;
+  error?: string;
+}
+
+export interface MarketStatisticsResult {
+  ok: boolean;
+  symbol: string;
+  pe: number | null;
+  marketCap: number | null;
   error?: string;
 }
 
@@ -316,8 +322,6 @@ export async function fetchMarketDataQuote({
           : readNumber(payload?.percent_change_1d),
       updatedAt: parseTimestamp(payload?.timestamp ?? payload?.datetime),
       volume: readNumber(payload?.volume),
-      pe: readNumber(payload?.pe),
-      marketCap: readNumber(payload?.market_cap),
       raw: body,
       ...(errorMessage ? { error: errorMessage } : {})
     };
@@ -343,8 +347,6 @@ export async function fetchMarketDataQuote({
       changePercent: null,
       updatedAt: null,
       volume: null,
-      pe: null,
-      marketCap: null,
       raw: null,
       error: error instanceof Error ? error.message : 'Unknown error'
     };
@@ -509,6 +511,51 @@ export async function fetchMarketDataCandles({
       status: null,
       candles: [],
       raw: null,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+export async function fetchMarketStatistics({
+  symbol,
+  token
+}: MarketRequestArgs): Promise<MarketStatisticsResult> {
+  const safeSymbol = symbol.trim().toUpperCase();
+  const params = new URLSearchParams({ symbol: safeSymbol });
+  const url = `https://api.twelvedata.com/statistics?${params.toString()}`;
+
+  try {
+    const { response, body } = await requestJson(url, {
+      headers: buildTwelveDataHeaders(token)
+    });
+
+    const payload =
+      body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
+    const errorMessage =
+      getPayloadError(payload) ??
+      (!response.ok ? response.statusText || 'Statistics request failed.' : null);
+
+    const valuations =
+      payload?.statistics &&
+      typeof payload.statistics === 'object' &&
+      (payload.statistics as Record<string, unknown>).valuations_metrics &&
+      typeof (payload.statistics as Record<string, unknown>).valuations_metrics === 'object'
+        ? ((payload.statistics as Record<string, unknown>).valuations_metrics as Record<string, unknown>)
+        : null;
+
+    return {
+      ok: response.ok && !errorMessage,
+      symbol: safeSymbol,
+      pe: readNumber(valuations?.trailing_pe),
+      marketCap: readNumber(valuations?.market_capitalization),
+      ...(errorMessage ? { error: errorMessage } : {})
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      symbol: safeSymbol,
+      pe: null,
+      marketCap: null,
       error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
