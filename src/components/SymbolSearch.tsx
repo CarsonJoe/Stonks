@@ -32,9 +32,15 @@ export function SymbolSearch({
   const [suggestions, setSuggestions] = useState<ResearchSuggestion[]>([]);
   const [searching, setSearching] = useState(false);
   const cancelRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const justSelectedRef = useRef(false);
 
   // Debounced live search
   useEffect(() => {
+    if (justSelectedRef.current) {
+      justSelectedRef.current = false;
+      return;
+    }
+
     if (cancelRef.current) clearTimeout(cancelRef.current);
 
     const query = value.trim();
@@ -77,6 +83,7 @@ export function SymbolSearch({
   }, [value, marketApiKey]);
 
   function applySelection(identity: ResearchIdentity) {
+    justSelectedRef.current = true;
     onChange(identity.instrumentName || identity.symbol);
     setSuggestions([]);
     onSelect(identity);
