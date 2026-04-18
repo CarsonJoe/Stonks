@@ -29,6 +29,8 @@ export interface MarketQuoteResult {
   changePercent: number | null;
   updatedAt: string | null;
   volume: number | null;
+  pe: number | null;
+  marketCap: number | null;
   raw: unknown;
   error?: string;
 }
@@ -314,6 +316,8 @@ export async function fetchMarketDataQuote({
           : readNumber(payload?.percent_change_1d),
       updatedAt: parseTimestamp(payload?.timestamp ?? payload?.datetime),
       volume: readNumber(payload?.volume),
+      pe: readNumber(payload?.pe),
+      marketCap: readNumber(payload?.market_cap),
       raw: body,
       ...(errorMessage ? { error: errorMessage } : {})
     };
@@ -339,6 +343,8 @@ export async function fetchMarketDataQuote({
       changePercent: null,
       updatedAt: null,
       volume: null,
+      pe: null,
+      marketCap: null,
       raw: null,
       error: error instanceof Error ? error.message : 'Unknown error'
     };
