@@ -5,8 +5,10 @@ import type { ThesisSnapshot } from '../db';
 import {
   fetchMarketDataCandles,
   fetchMarketDataQuote,
+  fetchMarketStatistics,
   type MarketCandlesResult,
-  type MarketQuoteResult
+  type MarketQuoteResult,
+  type MarketStatisticsResult
 } from '../lib/market';
 import { getCached, invalidatePrefix, setCached } from '../lib/marketCache';
 import { researchTimeframes, type ResearchIdentity, type ResearchTimeframeId } from '../lib/research';
@@ -27,12 +29,13 @@ interface MarketPane {
   symbol: string;
   quote: MarketQuoteResult | null;
   candles: MarketCandlesResult | null;
+  statistics: MarketStatisticsResult | null;
   busy: boolean;
   status: string;
 }
 
 function emptyPane(symbol = ''): MarketPane {
-  return { symbol, quote: null, candles: null, busy: false, status: '' };
+  return { symbol, quote: null, candles: null, statistics: null, busy: false, status: '' };
 }
 
 function buildSyntheticCandles(base: number, points = 42) {
@@ -119,6 +122,7 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
     const tf = researchTimeframes[timeframe];
     invalidatePrefix(`quote:${sym}`);
     invalidatePrefix(`candles:${sym}:${tf.resolution}:research:${timeframe}`);
+    invalidatePrefix(`statistics:${sym}`);
     setRefreshSeed((s) => s + 1);
   }
 
@@ -132,6 +136,7 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
           symbol: normalized,
           quote: null,
           candles: null,
+          statistics: null,
           busy: false,
           status: 'Add a Twelve Data key in Settings to load market data.'
         });
@@ -141,34 +146,38 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
       const tf = researchTimeframes[timeframe];
       const quoteKey = `quote:${normalized}`;
       const candleKey = `candles:${normalized}:${tf.resolution}:research:${timeframe}`;
+      const statsKey = `statistics:${normalized}`;
 
       const cachedQuote = getCached<MarketQuoteResult>(quoteKey);
       const cachedCandles = getCached<MarketCandlesResult>(candleKey);
+      const cachedStatistics = getCached<MarketStatisticsResult>(statsKey);
 
-      if (cachedQuote && cachedCandles) {
+      if (cachedQuote && cachedCandles && cachedStatistics) {
         const status =
           cachedQuote.ok && cachedCandles.ok ? ''
             : cachedCandles.ok ? 'Trend loaded. Quote unavailable.'
               : cachedQuote.ok ? 'Latest price loaded. Trend unavailable.'
                 : cachedQuote.error ?? cachedCandles.error ?? 'Market data unavailable.';
-        setMarket({ symbol: normalized, quote: cachedQuote, candles: cachedCandles, busy: false, status });
+        setMarket({ symbol: normalized, quote: cachedQuote, candles: cachedCandles, statistics: cachedStatistics, busy: false, status });
         return;
       }
 
       setMarket((prev) => ({ ...prev, symbol: normalized, busy: true, status: '' }));
 
-      const [quote, candles] = await Promise.all([
+      const [quote, candles, statistics] = await Promise.all([
         fetchMarketDataQuote({ symbol: normalized, token: marketApiKey }),
         fetchMarketDataCandles({
           symbol: normalized,
           token: marketApiKey,
           resolution: tf.resolution,
           countback: tf.countback
-        })
+        }),
+        fetchMarketStatistics({ symbol: normalized, token: marketApiKey })
       ]);
 
       setCached(quoteKey, quote);
       setCached(candleKey, candles);
+      setCached(statsKey, statistics);
 
       const status =
         quote.ok && candles.ok ? ''
@@ -176,7 +185,7 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
             : quote.ok ? 'Latest price loaded. Trend unavailable.'
               : quote.error ?? candles.error ?? 'Market data unavailable.';
 
-      setMarket({ symbol: normalized, quote, candles, busy: false, status });
+      setMarket({ symbol: normalized, quote, candles, statistics, busy: false, status });
     }
 
     void load();
@@ -212,14 +221,15 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
   const displayName = identity?.instrumentName ?? null;
   const displayExchange = market.quote?.exchange ?? identity?.exchange ?? null;
 
-  const pe = market.quote?.pe;
+  const pe = market.statistics?.pe;
+  const marketCap = market.statistics?.marketCap;
   const compactStats = [
     { label: 'Open', value: formatCurrency(market.quote?.open) },
     { label: 'High', value: formatCurrency(market.quote?.high ?? (researchValues.length ? Math.max(...researchValues) : null)) },
     { label: 'Low', value: formatCurrency(market.quote?.low ?? (researchValues.length ? Math.min(...researchValues) : null)) },
     { label: 'Vol', value: formatCompactNumber(market.quote?.volume) },
     { label: 'P/E', value: pe != null ? `${pe.toFixed(1)}×` : 'n/a' },
-    { label: 'Mkt Cap', value: market.quote?.marketCap != null ? `$${formatCompactNumber(market.quote.marketCap)}` : 'n/a' },
+    { label: 'Mkt Cap', value: marketCap != null ? `$${formatCompactNumber(marketCap)}` : 'n/a' },
   ];
 
   const { containerRef, pulling } = usePullToRefresh(handleRefresh);
