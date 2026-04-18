@@ -13,10 +13,13 @@ import { getLocalPasskeyCredential, saveLocalPasskeyCredential } from '../db';
 interface SettingsTabProps {
   marketApiKey: string;
   onMarketApiKeyChange: (key: string) => void;
+  geminiApiKey: string;
+  onGeminiApiKeyChange: (key: string) => void;
 }
 
-export function SettingsTab({ marketApiKey, onMarketApiKeyChange }: SettingsTabProps) {
+export function SettingsTab({ marketApiKey, onMarketApiKeyChange, geminiApiKey, onGeminiApiKeyChange }: SettingsTabProps) {
   const [apiKeyInput, setApiKeyInput] = useState(marketApiKey);
+  const [geminiKeyInput, setGeminiKeyInput] = useState(geminiApiKey);
   const [settingsStatus, setSettingsStatus] = useState('');
   const [settingsBusy, setSettingsBusy] = useState(false);
 
@@ -51,6 +54,18 @@ export function SettingsTab({ marketApiKey, onMarketApiKeyChange }: SettingsTabP
       await setSetting('market.twelveDataApiKey', next);
       onMarketApiKeyChange(next);
       setSettingsStatus(next ? 'Key saved. Screens reload live data on next open.' : 'Key cleared.');
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
+  async function handleSaveGeminiKey() {
+    setSettingsBusy(true);
+    try {
+      const next = geminiKeyInput.trim();
+      await setSetting('ai.geminiApiKey', next);
+      onGeminiApiKeyChange(next);
+      setSettingsStatus(next ? 'Gemini key saved.' : 'Gemini key cleared.');
     } finally {
       setSettingsBusy(false);
     }
@@ -138,6 +153,48 @@ export function SettingsTab({ marketApiKey, onMarketApiKeyChange }: SettingsTabP
           className="button button--primary"
           type="button"
           onClick={handleSaveApiKey}
+          disabled={settingsBusy}
+        >
+          Save key
+        </button>
+      </article>
+
+      {/* AI research */}
+      <article className="card form-card">
+        <div className="card__header">
+          <span className="eyebrow">AI research</span>
+        </div>
+        <label className="field">
+          <span>Gemini API key</span>
+          <input
+            value={geminiKeyInput}
+            onChange={(e) => setGeminiKeyInput(e.target.value)}
+            placeholder="Paste key from AI Studio"
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+        </label>
+        <div className="setup-list">
+          <p className="subtle-copy">
+            Used to pull a grounded sentiment summary when you search a stock in Research.
+            Free tier is enough — one call per symbol lookup.
+          </p>
+          <p className="subtle-copy">1. Go to Google AI Studio and sign in.</p>
+          <p className="subtle-copy">2. Create an API key (free, no billing required).</p>
+          <p className="subtle-copy">3. Paste it here. The key stays on this device only.</p>
+          <div className="link-row">
+            <a className="text-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+              Get API key
+            </a>
+            <a className="text-link" href="https://ai.google.dev/gemini-api/docs" target="_blank" rel="noreferrer">
+              Docs
+            </a>
+          </div>
+        </div>
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={handleSaveGeminiKey}
           disabled={settingsBusy}
         >
           Save key

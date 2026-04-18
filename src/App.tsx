@@ -90,6 +90,7 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<ThesisSnapshot[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [marketApiKey, setMarketApiKey] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [benchmarkCurrentPrice, setBenchmarkCurrentPrice] = useState<number | null>(null);
 
   // Auth / lock state
@@ -100,9 +101,10 @@ export default function App() {
 
   useEffect(() => {
     async function boot() {
-      const [savedKey, legacyKey, savedLockEnabled, savedPasskey, support] = await Promise.all([
+      const [savedKey, legacyKey, savedGeminiKey, savedLockEnabled, savedPasskey, support] = await Promise.all([
         getSetting<string>('market.twelveDataApiKey'),
         getSetting<string>('market.quoteToken'),
+        getSetting<string>('ai.geminiApiKey'),
         getSetting<boolean>('security.passkeyGateEnabled'),
         getLocalPasskeyCredential(),
         getWebAuthnSupportSnapshot()
@@ -110,6 +112,7 @@ export default function App() {
 
       const key = savedKey ?? legacyKey ?? '';
       setMarketApiKey(key);
+      setGeminiApiKey(savedGeminiKey ?? '');
       setSessionLocked(Boolean(savedLockEnabled && savedPasskey && support.supported));
 
       await refreshPortfolio(null, key);
@@ -236,6 +239,7 @@ export default function App() {
           {activeTab === 'research' ? (
             <ResearchTab
               marketApiKey={marketApiKey}
+              geminiApiKey={geminiApiKey}
               selectedSnapshot={snapshots.find((s) => s.thesis.id === selectedId) ?? null}
             />
           ) : null}
@@ -244,6 +248,8 @@ export default function App() {
             <SettingsTab
               marketApiKey={marketApiKey}
               onMarketApiKeyChange={setMarketApiKey}
+              geminiApiKey={geminiApiKey}
+              onGeminiApiKeyChange={setGeminiApiKey}
             />
           ) : null}
         </main>

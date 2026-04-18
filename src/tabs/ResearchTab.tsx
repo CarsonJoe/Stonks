@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LineChart } from '../components/LineChart';
 import { SymbolSearch } from '../components/SymbolSearch';
 import type { ThesisSnapshot } from '../db';
+import { fetchGeminiStockResearch, type GeminiResearchResult } from '../lib/gemini';
 import {
   fetchMarketDataCandles,
   fetchMarketDataQuote,
@@ -22,6 +23,7 @@ import {
 
 interface ResearchTabProps {
   marketApiKey: string;
+  geminiApiKey: string;
   selectedSnapshot: ThesisSnapshot | null;
 }
 
@@ -99,7 +101,7 @@ function usePullToRefresh(onRefresh: () => void) {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps) {
+export function ResearchTab({ marketApiKey, geminiApiKey, selectedSnapshot }: ResearchTabProps) {
   const defaultSymbol = selectedSnapshot?.thesis.symbol ?? 'AAPL';
 
   const [searchInput, setSearchInput] = useState(defaultSymbol);
@@ -108,6 +110,8 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
   const [timeframe, setTimeframe] = useState<ResearchTimeframeId>('1m');
   const [market, setMarket] = useState<MarketPane>(emptyPane(defaultSymbol));
   const [refreshSeed, setRefreshSeed] = useState(0);
+  const [aiResearch, setAiResearch] = useState<GeminiResearchResult | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
 
   // Update default when selected position changes (only if user hasn't searched yet)
   useEffect(() => {
@@ -190,6 +194,38 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
 
     void load();
   }, [activeSymbol, timeframe, marketApiKey, refreshSeed]);
+
+  useEffect(() => {
+    const normalized = normalizeSymbol(activeSymbol);
+    if (!normalized || !geminiApiKey.trim()) {
+      setAiResearch(null);
+      return;
+    }
+
+    const cacheKey = `gemini:${normalized}`;
+    const cached = getCached<GeminiResearchResult>(cacheKey);
+    if (cached) {
+      setAiResearch(cached);
+      return;
+    }
+
+    let cancelled = false;
+    setAiBusy(true);
+    setAiResearch(null);
+
+    fetchGeminiStockResearch({
+      symbol: normalized,
+      instrumentName: identity?.instrumentName ?? null,
+      apiKey: geminiApiKey
+    }).then((result) => {
+      if (cancelled) return;
+      setCached(cacheKey, result);
+      setAiResearch(result);
+      setAiBusy(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [activeSymbol, geminiApiKey]);
 
   function handleSelect(id: ResearchIdentity) {
     setIdentity(id);
@@ -306,6 +342,19 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
           ))}
         </div>
       </div>
+
+      {geminiApiKey.trim() ? (
+        <div className="ai-research">
+          <span className="eyebrow">Market sentiment</span>
+          {aiBusy ? (
+            <p className="subtle-copy">Researching…</p>
+          ) : aiResearch?.summary ? (
+            <p className="ai-research__body">{aiResearch.summary}</p>
+          ) : aiResearch?.error ? (
+            <p className="status-line">{aiResearch.error}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {market.status ? <p className="status-line">{market.status}</p> : null}
     </section>

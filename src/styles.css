@@ -588,6 +588,19 @@ textarea {
   letter-spacing: 0.02em;
 }
 
+.ai-research {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem 1rem 0.5rem;
+}
+
+.ai-research__body {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #c8d3de;
+  white-space: pre-wrap;
+}
+
 .compact-stat strong {
   font-size: 0.86rem;
   line-height: 1.1;
