@@ -212,20 +212,14 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
   const displayName = identity?.instrumentName ?? null;
   const displayExchange = market.quote?.exchange ?? identity?.exchange ?? null;
 
+  const pe = market.quote?.pe;
   const compactStats = [
     { label: 'Open', value: formatCurrency(market.quote?.open) },
-    { label: 'Prev', value: formatCurrency(market.quote?.previousClose) },
     { label: 'High', value: formatCurrency(market.quote?.high ?? (researchValues.length ? Math.max(...researchValues) : null)) },
     { label: 'Low', value: formatCurrency(market.quote?.low ?? (researchValues.length ? Math.min(...researchValues) : null)) },
     { label: 'Vol', value: formatCompactNumber(market.quote?.volume) },
-    { label: 'Exchange', value: displayExchange ?? 'n/a' },
-    { label: 'Type', value: market.quote?.instrumentType ?? identity?.instrumentType ?? 'n/a' },
-    {
-      label: 'Updated',
-      value: market.quote?.updatedAt
-        ? new Date(market.quote.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-        : 'n/a'
-    }
+    { label: 'P/E', value: pe != null ? `${pe.toFixed(1)}×` : 'n/a' },
+    { label: 'Mkt Cap', value: market.quote?.marketCap != null ? `$${formatCompactNumber(market.quote.marketCap)}` : 'n/a' },
   ];
 
   const { containerRef, pulling } = usePullToRefresh(handleRefresh);
@@ -246,15 +240,6 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
           submitLabel="Go"
           placeholder="Search company or ticker"
         />
-        <button
-          type="button"
-          className={`refresh-btn${market.busy ? ' refresh-btn--spinning' : ''}`}
-          onClick={handleRefresh}
-          aria-label="Refresh market data"
-          disabled={market.busy}
-        >
-          ↻
-        </button>
       </div>
 
       <article className="hero-card hero-card--compact">
