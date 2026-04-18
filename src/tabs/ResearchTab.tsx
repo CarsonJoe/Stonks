@@ -240,15 +240,6 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
           submitLabel="Go"
           placeholder="Search company or ticker"
         />
-        <button
-          type="button"
-          className={`refresh-btn${market.busy ? ' refresh-btn--spinning' : ''}`}
-          onClick={handleRefresh}
-          aria-label="Refresh market data"
-          disabled={market.busy}
-        >
-          ↻
-        </button>
       </div>
 
       <article className="hero-card hero-card--compact">
