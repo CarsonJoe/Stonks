@@ -247,12 +247,12 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
           onChange={setSearchInput}
           onSelect={handleSelect}
           marketApiKey={marketApiKey}
-          submitLabel="Go"
           placeholder="Search company or ticker"
+          inline
         />
       </div>
 
-      <article className="hero-card hero-card--compact">
+      <div className="research-content">
         <div className="research-header">
           <div className="hero-card__copy">
             <span className="eyebrow">
@@ -305,7 +305,7 @@ export function ResearchTab({ marketApiKey, selectedSnapshot }: ResearchTabProps
             </div>
           ))}
         </div>
-      </article>
+      </div>
 
       {market.status ? <p className="status-line">{market.status}</p> : null}
     </section>
