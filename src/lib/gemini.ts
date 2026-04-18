@@ -17,10 +17,10 @@ export async function fetchGeminiStockResearch({
   const safeSymbol = symbol.trim().toUpperCase();
   const nameHint = instrumentName ? ` (${instrumentName})` : '';
   const prompt =
-    `Briefly summarize current market sentiment, analyst views, and notable recent news for ${safeSymbol}${nameHint}. ` +
-    `2–3 short paragraphs. Focus on what investors and analysts are saying right now.`;
+    `Summarize current market sentiment, analyst views, and notable recent news for ${safeSymbol}${nameHint}. ` +
+    `2–3 paragraphs. No introduction, no sign-off, no conversational framing — just the content.`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey.trim()}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey.trim()}`;
 
   try {
     const response = await fetch(url, {
